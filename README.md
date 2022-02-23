@@ -2045,6 +2045,7 @@ This will install the necessary CDK, then this example's dependencies, and then 
 To test the app after it is built, you can run npm test in this example's root folder. This will utilize the CDK [assertions](https://docs.aws.amazon.com/cdk/api/latest/docs/assertions-readme.html) library and run Jest on `lambda-cron.test.js`.
 
 > `index.ts`
+>
 > [index.ts](./IaC_UnitTesting/cdk/typescript/lambda-cron/index.ts)
 >
 
@@ -2083,6 +2084,7 @@ app.synth();
 ```
 
 > `lambda-cron.test.ts`
+>
 > [lambda-cron.test.ts](./IaC_UnitTesting/cdk/typescript/lambda-cron/lambda-cron.test.ts)
 >
 
