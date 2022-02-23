@@ -612,10 +612,10 @@ Here are the steps:
   1. Click on the **Plaintext** tab and enter the GitHub token value in the text area.
      You can get this token by going to [Personal access tokens](https://github.com/settings/tokens) and creating one or using an existing token.
 	 To create a GitHub token, see the [instructions here](https://github.com/PaulDuvall/aws-encryption-workshop/wiki/0.2#create-an-oauth-token-in-github-optional).
-  1. Leave the Select the __encryption__ __key__ dropdown with the **DefaultEncryptionKey** option selected.
+  1. Leave the Select the *encryption key* dropdown with the **DefaultEncryptionKey** option selected.
   1. Click the **Next** button.
   1. Enter **github/personal-access-token** for the Secret name and description on the Secret name and description page and click Next.
-  1. On the __Configure__ __automatic__ __rotation__ __page__, select the **Disable automatic rotation** radio button.
+  1. On the *Configure automatic rotation page*, select the **Disable automatic rotation** radio button.
   1. Click the **Next** button.
   1. On the **Review** page, click the **Store** button.
 
@@ -1319,7 +1319,7 @@ Snapshot Summary
 › 1 snapshot written
 ```
 
-The snapshots are stored in a directory called `__snapshots__`. If you look at the snapshot, you’ll see it just contains a 
+The snapshots are stored in a directory called `snapshots`. If you look at the snapshot, you’ll see it just contains a 
 copy of the CloudFormation template that our stack would generate:
 
 ```json
@@ -2027,43 +2027,58 @@ In this example we create a new lambda function that executes every day at 6pm U
 
 ###### Testing using TypeScript
 
-####### Build
+Build
+-----
 
-####### Test
+Test
+----
 
-####### Deploy
+Deploy
+------
 
-####### Synthesize Cloudformation Template
+Synthesize Cloudformation Template
+----------------------------------
 
 ###### Testing using Python
 
-####### Build
+Build
+-----
 
-####### Test
+Test
+----
 
-####### Deploy
+Deploy
+------
 
-####### Synthesize Cloudformation Template
+Synthesize Cloudformation Template
+----------------------------------
 
 ###### Testing using Java
 
+Build
+-----
 
-####### Build
+Test
+----
 
-####### Test
+Deploy
+------
 
-####### Deploy
-
-####### Synthesize Cloudformation Template
+Synthesize Cloudformation Template
+----------------------------------
 
 ###### Testing using Go
 
-####### Build
+Build
+-----
 
-####### Test
+Test
+----
 
-####### Deploy
+Deploy
+------
 
-####### Synthesize Cloudformation Template
+Synthesize Cloudformation Template
+----------------------------------
 
 **[⬆ back to top](#table-of-contents)**
