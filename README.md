@@ -421,7 +421,8 @@ We will now see an example of how I am enabling TaskCat to run from AWS CodeBuil
 
 I’ve also included a screencast below that provides a walkthrough of the steps covered in this post.
 
-[[https://www.youtube.com/watch?v=tB8nK5d_SKY&feature=youtu.be][Run AWS CloudFormation tests from CodePipeline using TaskCat - YouTube]]
+[![Run AWS CloudFormation tests from CodePipeline using TaskCat - YouTube](http://img.youtube.com/vi/tB8nK5d_SKY/0.jpg)](https://www.youtube.com/watch?v=tB8nK5d_SKY "Run AWS CloudFormation tests from CodePipeline using TaskCat")
+
 
 **Run TaskCat from the Command Line**
 
