@@ -382,7 +382,322 @@ I’d argue competition is healthy and in some cases has forced the providers th
 
 ### IaC: How to Unit Test?
 
+**CloudFormation: Unit Testing**
+
+The [AWS QuickStart](https://aws.amazon.com/quickstart/?quickstart-all.sort-by=item.additionalFields.updateDate&quickstart-all.sort-order=desc) team open sourced a project they use for automated testing of CloudFormation templates called [TaskCat](https://github.com/aws-quickstart/taskcat). 
+With TaskCat, you can run automated tests to learn of and fix any errors that arise in your CloudFormation templates.
+
+If you have been using CloudFormation for any period of time, you will learn that even if you have not made any changes to your templates, they might still fail. As one of my colleagues is fond of saying, if you haven’t run your CloudFormation template in the past week, it’s broken. This is typical of most software systems in which there are often version, configuration, API, or other changes to dependencies that can affect the operation of the CloudFormation template(s).
+
+**CDK: Unit Testing**
+
+The pattern for writing tests for infrastructure is very similar to how you would write them for application code: you define a test case as you would normally 
+do in the test framework of your choice. Inside that test case you instantiate constructs as you would do in your CDK app, and then you make assertions 
+about the [AWS CloudFormation](https://aws.amazon.com/cloudformation/) template that the code you wrote would generate.
+
+The one thing that’s different from normal tests are the assertions that you write on your code. The TypeScript CDK ships with an assertion library ([@aws-cdk/assert](https://github.com/aws/aws-cdk/tree/master/packages/%40aws-cdk/assert)) 
+that makes it easy to make assertions on your infrastructure. In fact, all of the [constructs](https://docs.aws.amazon.com/cdk/latest/guide/constructs.html) 
+in the [AWS Construct Library](https://docs.aws.amazon.com/cdk/api/latest/docs/aws-construct-library.html) that ship with the CDK are tested in this way,
+so we can make sure they do—and keep on doing—what they are supposed to do.
+Our assertions library is currently only available to TypeScript and JavaScript users, but will be made available to users of other languages eventually.
+
+Broadly, there are a couple of classes of tests you will be writing:
+
+  * **Snapshot tests** (also known as “golden master” tests). Using Jest, these are very convenient to write. They assert that the CloudFormation template the code generates is the same as it was when the test was written. If anything changes, the test framework will show you the changes in a diff. If the changes were accidental, you’ll go and update the code until the test passes again, and if the changes were intentional, you’ll have the option to accept the new template as the new “golden master”.
+    * In the CDK itself, we also use snapshot tests as “integration tests”. Rather than individual unit tests that only look at the CloudFormation template output, we write a larger application using CDK constructs, deploy it and verify that it works as intended. We then make a snapshot of the CloudFormation template, that will force us to re-deploy and re-test the deployment if the generated template starts to deviate from the snapshot.
+  * **Fine-grained assertions about the template.** Snapshot tests are convenient and fast to write, and provide a baseline level of security that your code changes did not change the generated template. The trouble starts when you purposely introduce changes. Let’s say you have a snapshot test to verify output for feature A, and you now add a feature B to your construct. This changes the generated template, and your snapshot test will break, even though feature A still works as intended. The snapshot can’t tell which part of the template is relevant to feature A and which part is relevant to feature B. To combat this, you can also write more fine-grained assertions, such as “this resource has this property” (and I don’t care about any of the others).
+  * **Validation tests.** One of the advantages of general-purpose programming languages is that we can add additional validation checks and error out early, saving the construct user some trial-and-error time. You would test those by using the construct in an invalid way and asserting that an error is raised.
+
+**Terraform: Unit Testing**
+
+New Context released its first open-source project, [kitchen-terraform](https://github.com/newcontext/kitchen-terraform).
+kitchen-terraform was created to bring the benefits of test-driven development to [Terraform](https://terraform.io/) projects.
+As use of Terraform continues to gain popularity in production environments, it is critical that this logic is thoroughly tested.
+kitchen-terraform allows Terraform development to be driven by a suite of tests to verify new features and protect against regressions.
+
 #### CloudFormation: Unit Testing
+
+We will now see an example of how I am enabling TaskCat to run from AWS CodeBuild as part of a deployment pipeline defined in AWS CodePipeline. What’s more, you will see how to automate the solution in AWS CloudFormation. Using this approach, you can configure TaskCat to run with every code change and learn when errors occur in your CloudFormation templates.
+
+I’ve also included a screencast below that provides a walkthrough of the steps covered in this post.
+
+[[https://www.youtube.com/watch?v=tB8nK5d_SKY&feature=youtu.be][Run AWS CloudFormation tests from CodePipeline using TaskCat - YouTube]]
+
+**Run TaskCat from the Command Line**
+
+In this section, you will learn how to use manually run TaskCat automated tests on CloudFormation templates from the command line.
+
+TaskCat is provided as a Python package that you will download. This example assumes you have access to an AWS account and have established the necessary permissions.
+In order to show specific directory names, it also assumes you are using [AWS Cloud9](https://stelligent.com/2018/04/09/automating-aws-cloud9/) for your IDE.
+If you are not, you should be able to simply modify the directory names accordingly.
+
+**Install Python and TaskCat**
+
+TaskCat uses Python 3 so you will need to install Python, pip (the package installer for Python), and TaskCat via pip in AWS Cloud9.
+
+Here are the instructions for installing these tools using the Cloud9 terminal:
+
+```bash
+cd ~/environment
+sudo yum -y update
+python --version
+curl -O https://bootstrap.pypa.io/get-pip.py
+python3 get-pip.py --user
+sudo pip install --upgrade pip
+pip3 install taskcat --user
+```
+
+To verify TaskCat is installed, type `taskcat --version` from the command line. You should see something like this returned from the command line:
+
+```bash
+taskcat --version
+
+ _            _             _   
+| |_ __ _ ___| | _____ __ _| |_ 
+| __/ _` / __| |/ / __/ _` | __|
+| || (_| \__ \    (_| (_| | |_ 
+ \__\__,_|___/_|\_\___\__,_|\__|
+                                
+
+
+version 0.9.8
+0.9.8
+```
+
+For the purposes of these examples, I am assuming you are using version `0.9` or above.
+
+**Configure TaskCat**
+
+You can run TaskCat in several ways and there are a few command line options that the tool provides. I will take you through a simple example that is currently running on an open source repository that I own.
+
+**Create a new GitHub repository**
+
+In this section, you will create a new GitHub repository to store a CloudFormation so that you can run TaskCat against this and other CloudFormation templates.
+
+Here are the steps for creating a new repository in GitHub:
+
+  1. In the upper-right corner of any page on [GitHub](https://github.com/), use the drop-down menu, and select **New repository**.
+  1. Type `taskcat-example` as the name for your repository.
+  1. Type `Repository to run TaskCat examples.` for the description of your repository.
+  1. Choose to make the repository either public or private.
+  1. Select **Initialize this repository with a README**.
+  1. Click **Create repository**.
+
+For more information, see [Create a repo](https://help.github.com/en/github/getting-started-with-github/create-a-repo).
+
+**Clone the Repository**
+
+From your Cloud9 terminal, type the following (replacing **YOURGITHUBUSERID** with your GitHub userid):
+
+```bash
+cd ~/environment
+git clone https://github.com/YOURGITHUBUSERID/taskcat-example.git
+cd taskcat-example
+```
+
+**Create a .taskcat.yml file**
+
+From your Cloud9 terminal, type the following:
+
+```bash
+cd ~/environment/taskcat-example
+touch .taskcat.yml
+```
+
+**Create a CloudFormation Template**
+
+From your Cloud9 terminal, type the following:
+
+```bash
+cd ~/environment/taskcat-example
+touch sqs.yml
+```
+
+Open the `sqs.yml` and copy the contents below and save the file.
+
+```yaml
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates an SQS Queue.
+Resources:
+  MyQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName:
+        Fn::Join:
+        - ''
+        - - SampleQueue-
+          - Ref: AWS::StackName
+Outputs:
+  MyQueueARN:
+    Value:
+      Ref: MyQueue
+```
+
+**Update .taskcat.yml**
+
+From your Cloud9 terminal, copy and paste the following into your .taskcat.yml file and save the contents.
+
+```yaml
+project:
+  name: taskcat-example
+  regions:
+    - us-east-1
+    - us-east-2
+tests:
+  sqs-test:
+    template: ./sqs.yml
+```
+
+This is the configuration file that TaskCat uses to know which CloudFormation templates to run and how to run them.
+You can pass in parameters, use TaskCat tokens to generate passwords and other values, and perform other configuration.
+Here’s an example of passing in a parameter to a CloudFormation template:
+
+```yaml
+tests:
+  lesson5-ebs:
+    parameters:
+      AvailabilityZones: '$[taskcat_genaz_1]'
+    template: ./lesson5-rest/ceoa-5-ebs.yml
+```
+
+`$[taskcat_genaz_1]` is a TaskCat token that obtains a single availability zone for a region 
+(if I choose `$[taskcat_genaz_2]`, it selects two AZs). You use `parameters` to list the parameters and values 
+when launching the CloudFormation stack. For more information on TaskCat tokens see [Preparing TaskCat input files](https://aws-quickstart.github.io/input-files.html).
+
+**Run TaskCat**
+
+From your Cloud9 terminal, type the following command to run TaskCat against your CloudFormation template.
+
+```bash
+taskcat test run
+```
+
+TaskCat will create and delete CloudFormation stacks for all the files listed in the .taskcat.yml file. In this example, it will create and delete a total of two stacks – one for each listed AWS region 
+in the **.taskcat.yml**. When successful, the results will look similar to the image below.
+
+![taskcat-cli-300x284](./assets/taskcat-cli-300x284.png)
+
+Once it’s complete, you can open the **index.html** generated in the **taskcat_outputs** directory to view the TaskCat dashboard. 
+To do this, right click on the **index.html** file in Cloud9 and click **Preview** on the context menu.
+A web page should display that looks similar to the image below.
+
+![taskcat-dashboard-1024x297](./assets/taskcat-dashboard-1024x297.png)
+
+**Creating a Pipeline to Run TaskCat**
+
+In this example, you will see how you can create a CloudFormation template that automatically provisions CodePipeline, 
+a GitHub source provider, a CodeBuild project to run TaskCat, and another CodeBuild project to deploy the TaskCat dashboard. 
+This way you can run TaskCat automatically without needing to manually type commands every time.
+
+**Deployment Steps**
+
+There are four main steps in launching this solution: prepare an AWS account, create and store source files, launch the CloudFormation stack, 
+and test the deployment. Each is described in more detail in this section. Please note that you are responsible for any fees incurred 
+while creating and launching your solution.
+
+**Step 1. Prerequisites**
+
+This example assumes you have access to an AWS account and have established the necessary permissions.
+
+**Store your GitHub Personal Access Token in AWS Secrets Manager**
+
+In order for CodePipeline to use GitHub as a source provider it needs your GitHub personal access token. Since we want to run all changes 
+automatically and we want to be secure, you need to store this secret in an encrypted location. You will do this in AWS Secrets Manager. 
+Here are the steps:
+
+  1. Go to the [AWS Secrets Manager Console](https://console.aws.amazon.com/secretsmanager/).
+  1. Click **Secrets** and click the **Store a new secret** button.
+  1. Click on the **Other type of secrets** radio button.
+  1. Click on the **Plaintext** tab and enter the GitHub token value in the text area.
+     You can get this token by going to [Personal access tokens](https://github.com/settings/tokens) and creating one or using an existing token.
+	 To create a GitHub token, see the [instructions here](https://github.com/PaulDuvall/aws-encryption-workshop/wiki/0.2#create-an-oauth-token-in-github-optional).
+  1. Leave the Select the __encryption__ __key__ dropdown with the **DefaultEncryptionKey** option selected.
+  1. Click the **Next** button.
+  1. Enter **github/personal-access-token** for the Secret name and description on the Secret name and description page and click Next.
+  1. On the __Configure__ __automatic__ __rotation__ __page__, select the **Disable automatic rotation** radio button.
+  1. Click the **Next** button.
+  1. On the **Review** page, click the **Store** button.
+
+**Step 2. Create and Store Source Files**
+
+Next, you will create two source files that will be committed to your GitHub repository. 
+From your AWS Cloud9 terminal, type the following to create and save two empty source files:
+
+```bash
+touch buildspec.yml
+touch pipeline-taskcat.yml
+```
+
+**buildspec.yml**
+
+Copy the source contents from the **buildspec.yml** and save it to your local file of the same name in your Cloud9 environment. 
+This file installs and configures Python, pip, and TaskCat. It also runs the TaskCat tests against the CloudFormation templates 
+listed in the **.taskcat.yml** file. The **buildspec.yml** file is configured to run as part of a CodeBuild project defined in 
+the **pipeline-taskcat.yml** CloudFormation template. In this template CodePipeline is configured to execute this CodeBuild project.
+
+**pipeline-taskcat.yml**
+
+Copy the source contents from the **pipeline-taskcat.yml** file and save it to your local file of the same name in your Cloud9 environment. 
+This CloudFormation template provisions two CodeBuild projects, IAM Permissions, S3 Buckets, and a deployment pipeline in AWS CodePipeline. 
+Once this CloudFormation stack is successfully launched, a pipeline will run in which CodeBuild will run CloudFormation tests in TaskCat, 
+create a static website in S3, and copy the TaskCat dashboard files to this website.
+
+There are a few things to note in this CloudFormation template. The default value for the **GitHubToken** parameter is configured as shown below. 
+This assumes that you created the secrets in AWS Secrets Manager and used the name **github/personal-access-token**. If you have not, 
+you will need to make changes for the CloudFormation template to work.
+
+```
+Default: '{{resolve:secretsmanager:github/personal-access-token:SecretString}}'
+```
+
+Also, there are two CodeBuild projects in this template. **CodeBuildTest** runs the TaskCat tests and is configured to run from the CodePipeline resource.
+**CodeBuildWebsite** copies the files generated and stored in the **taskcat_outputs** folder to an S3 bucket and then configures the S3 bucket 
+to be a public static website. CodePipeline is also configured to run this CodeBuild project.
+
+This CloudFormation stack configures CodePipeline to run with ever GitHub change. If you’d rather run these tests on a scheduled basis, 
+you will need to make changes to the configuration.
+
+**Add and Commit the Source files to GitHub**
+
+From your AWS Cloud9 terminal, type the following to add and commit files to your GitHub repository:
+
+```bash
+cd ~/environment/taskcat-example
+git add .
+git commit -am "add CloudFormation and CodeBuild files" && git push
+```
+
+**Step 3. Launch the Stack**
+
+From your AWS Cloud9 environment, type the following (replacing **YOURGITHUBUSERID** with your GitHub userid):
+
+```bash
+aws cloudformation create-stack --stack-name pipeline-taskcat --capabilities CAPABILITY_NAMED_IAM --disable-rollback --template-body file:///home/ec2-user/environment/taskcat-example/pipeline-taskcat.yml --parameters ParameterKey=GitHubUser,ParameterValue=YOURGITHUBUSERID ParameterKey=GitHubRepo,ParameterValue=taskcat-example
+```
+
+**Step 4. Test the Deployment**
+
+Verify the CloudFormation template has launched by going to the CloudFormation dashboard.
+
+Once the stack is **CREATE_COMPLETE**, select it and click on the **Outputs** tab. It should look similar to the image below.
+
+![taskcat-cfn-outputs](./assets/taskcat-cfn-outputs.png)
+
+Now, click on the **PipelineUrl** Output. This will launch the pipeline you automatically provisioned in CodePipeline – as shown below.
+
+![taskcat-pipeline-505x1024](./assets/taskcat-pipeline-505x1024.png)
+
+Once it has successfully run through all the stages in the pipeline, you will click on the **TaskCatDashboardUrl** Output value. 
+This launches a website containing the TaskCat dashboard. You can click on **View Logs** for additional detail.
+
+![taskcat-dashboard-1-1024x184](./assets/taskcat-dashboard-1-1024x184.png)
+
+**Additional Resources**
+
+  * [Testing your QuickStart](https://aws-quickstart.github.io/testing.html)
+  * [A deep dive into testing with TaskCat](https://aws.amazon.com/blogs/infrastructure-and-automation/a-deep-dive-into-testing-with-taskcat/)
+  * [Up your AWS CloudFormation testing game using TaskCat](https://aws.amazon.com/blogs/infrastructure-and-automation/up-your-aws-cloudformation-testing-game-using-taskcat/)
 
 ##### CloudFormation: Demo
 
