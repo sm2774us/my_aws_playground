@@ -2028,58 +2028,42 @@ In this example we create a new lambda function that executes every day at 6pm U
 
 ###### Testing using TypeScript
 
-Build
------
+**Build**
 
-Test
-----
+**Test**
 
-Deploy
-------
+**Deploy**
 
-Synthesize Cloudformation Template
-----------------------------------
+**Synthesize Cloudformation Template**
 
 ###### Testing using Python
 
-Build
------
+**Build**
 
-Test
-----
+**Test**
 
-Deploy
-------
+**Deploy**
 
-Synthesize Cloudformation Template
-----------------------------------
+**Synthesize Cloudformation Template**
 
 ###### Testing using Java
 
-Build
------
+**Build**
 
-Test
-----
+**Test**
 
-Deploy
-------
+**Deploy**
 
-Synthesize Cloudformation Template
-----------------------------------
+**Synthesize Cloudformation Template**
 
 ###### Testing using Go
 
-Build
------
+**Build**
 
-Test
-----
+**Test**
 
-Deploy
-------
+**Deploy**
 
-Synthesize Cloudformation Template
-----------------------------------
+**Synthesize Cloudformation Template**
 
 **[⬆ back to top](#table-of-contents)**
