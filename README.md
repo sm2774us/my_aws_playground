@@ -1174,8 +1174,896 @@ bundle exec kitchen destroy
 
 #### CDK
 
+The [AWS Cloud Development Kit](https://aws.amazon.com/cdk/) (CDK) allows you to describe your application’s infrastructure using a general-purpose 
+programming language, such as TypeScript, JavaScript or Python. This opens up familiar avenues for working with your infrastructure, such as using 
+your favorite IDE, getting the benefit of autocomplete, creating abstractions in a familiar way, distributing them using your ecosystem’s standard 
+package manager, and of course: writing tests for your infrastructure like you would write tests for your application.
+
+In this blog post you will learn how to write tests for your infrastructure code in TypeScript using [Jest](https://jestjs.io/). The code for JavaScript will be the 
+same (sans the types), while the code for Python would follow the same testing patterns. Unfortunately, there are no ready-made Python libraries 
+for you to use yet.
+
+**Approach**
+
+The pattern for writing tests for infrastructure is very similar to how you would write them for application code: you define a test case as you 
+would normally do in the test framework of your choice. Inside that test case you instantiate constructs as you would do in your CDK app, and 
+then you make assertions about the [AWS CloudFormation](https://aws.amazon.com/cloudformation/) template that the code you wrote would generate.
+
+The one thing that’s different from normal tests are the assertions that you write on your code. The TypeScript CDK ships with an 
+assertion library ([@aws-cdk/assert](https://github.com/aws/aws-cdk/tree/master/packages/%40aws-cdk/assert)) that makes it easy to make assertions 
+on your infrastructure. In fact, all of the [constructs](https://docs.aws.amazon.com/cdk/latest/guide/constructs.html) in the 
+[AWS Construct Library](https://docs.aws.amazon.com/cdk/api/latest/docs/aws-construct-library.html) that ship with the CDK are tested in this way, 
+so we can make sure they do—and keep on doing—what they are supposed to do. Our assertions library is currently only available 
+to TypeScript and JavaScript users, but will be made available to users of other languages eventually.
+
+Broadly, there are a couple of classes of tests you will be writing:
+
+  * **Snapshot tests** (also known as “golden master” tests). Using Jest, these are very convenient to write. 
+    They assert that the CloudFormation template the code generates is the same as it was when the test was written. 
+	If anything changes, the test framework will show you the changes in a diff. If the changes were accidental, 
+	you’ll go and update the code until the test passes again, and if the changes were intentional, you’ll have the option 
+	to accept the new template as the new “golden master”.
+      * In the CDK itself, we also use snapshot tests as “integration tests”. Rather than individual unit tests that only look at the 
+	    CloudFormation template output, we write a larger application using CDK constructs, deploy it and verify that it works as intended. 
+	    We then make a snapshot of the CloudFormation template, that will force us to re-deploy and re-test the deployment if the 
+	    generated template starts to deviate from the snapshot.
+
+  * **Fine-grained assertions about the template.** Snapshot tests are convenient and fast to write, and provide a baseline 
+    level of security that your code changes did not change the generated template. The trouble starts when you purposely 
+	introduce changes. Let’s say you have a snapshot test to verify output for feature A, and you now add a feature B to 
+	your construct. This changes the generated template, and your snapshot test will break, even though feature A still works as intended. 
+	The snapshot can’t tell which part of the template is relevant to feature A and which part is relevant to feature B. 
+	To combat this, you can also write more fine-grained assertions, such as “this resource has this property” 
+	(and I don’t care about any of the others).
+
+  * **Validation tests.** One of the advantages of general-purpose programming languages is that we can add additional validation 
+    checks and error out early, saving the construct user some trial-and-error time. You would test those by using the construct 
+    in an invalid way and asserting that an error is raised.
+
+**An example: a dead letter queue**
+
+Let’s say you want to write a `DeadLetterQueue` construct. A [dead letter queue](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html) 
+is used to hold another queue’s messages if they fail delivery too many times. It’s generally bad news if messages end up the dead letter queue, because 
+it indicates something is wrong with the queue processor. To that end, your `DeadLetterQueue` will come with an alarm that fires if there 
+are any items in the queue. It is up to the user of the construct to attach any actions to the alarm firing, such as notifying an SNS topic.
+
+Start by creating an empty construct library project using the CDK CLI and install some of the construct libraries we’ll need:
+
+```bash
+$ cdk init --language=typescript lib
+$ npm install @aws-cdk/aws-sqs @aws-cdk/aws-cloudwatch
+```
+
+The CDK code might look like this (put this in a file called `lib/dead-letter-queue.ts`):
+
+```TypeScript
+import cloudwatch = require('@aws-cdk/aws-cloudwatch');
+import sqs = require('@aws-cdk/aws-sqs');
+import { Construct, Duration } from '@aws-cdk/core';
+
+export class DeadLetterQueue extends sqs.Queue {
+  public readonly messagesInQueueAlarm: cloudwatch.IAlarm;
+
+  constructor(scope: Construct, id: string) {
+    super(scope, id);
+
+    // Add the alarm
+    this.messagesInQueueAlarm = new cloudwatch.Alarm(this, 'Alarm', {
+      alarmDescription: 'There are messages in the Dead Letter Queue',
+      evaluationPeriods: 1,
+      threshold: 1,
+      metric: this.metricApproximateNumberOfMessagesVisible(),
+    });
+  }
+}
+```
+
+**Writing a test**
+
+You’re going to write a test for this construct. First, start off by installing Jest and the CDK assertion library:
+
+```bash
+$ npm install --save-dev jest @types/jest @aws-cdk/assert
+```
+
+You also have to edit `package.json` file in your project to tell NPM to run Jest, and tell Jest what kind of files to collect:
+
+```json
+{
+  ...
+ "scripts": {
+    ...
+    "test": "jest"
+  },
+  "devDependencies": {
+    ...
+    "@types/jest": "^24.0.18",
+    "jest": "^24.9.0",
+  },
+  "jest": {
+    "moduleFileExtensions": ["js"]
+  }
+}
+```
+
+You can now write a test. A good place to start is checking that the queue’s retention period is 2 weeks. The simplest kind of test 
+you can write is a snapshot test, so start with that. Put the following in a file named `test/dead-letter-queue.test.ts`:
+
+```TypeScript
+import { SynthUtils } from '@aws-cdk/assert';
+import { Stack } from '@aws-cdk/core';
+
+import dlq = require('../lib/dead-letter-queue');
+
+test('dlq creates an alarm', () => {
+  const stack = new Stack();
+  new dlq.DeadLetterQueue(stack, 'DLQ');
+  expect(SynthUtils.toCloudFormation(stack)).toMatchSnapshot();
+});
+```
+
+You can now compile and run the test:
+
+```bash
+$ npm run build
+$ npm test
+```
+
+Jest will run your test and tell you that it has recorded a snapshot from your test.
+
+```bash
+PASS  test/dead-letter-queue.test.js
+ ✓ dlq creates an alarm (55ms)
+ › 1 snapshot written.
+Snapshot Summary
+› 1 snapshot written
+```
+
+The snapshots are stored in a directory called `__snapshots__`. If you look at the snapshot, you’ll see it just contains a 
+copy of the CloudFormation template that our stack would generate:
+
+```json
+exports[`dlq creates an alarm 1`] = `
+Object {
+  "Resources": Object {
+    "DLQ581697C4": Object {
+      "Type": "AWS::SQS::Queue",
+    },
+    "DLQAlarm008FBE3A": Object {
+     "Properties": Object {
+        "AlarmDescription": "There are messages in the Dead Letter Queue",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+...
+```
+
+Congratulations! You’ve written and run your first test. Don’t forget to commit the snapshots directory to version control 
+so that the snapshot gets stored and versioned with your code.
+
+**Using the snapshot**
+
+To make sure the test is working, you’re going to break it to make sure the breakage is detected. To do this, in your 
+`dead-letter-queue.ts` file, change the `cloudwatch.Alarm` period to 1 minute (instead of the default of 5 minutes), 
+by adding a `period` argument:
+
+```TypeScript
+this.messagesInQueueAlarm = new cloudwatch.Alarm(this, 'Alarm', {
+  // ...
+  period: Duration.minutes(1),
+});
+```
+
+If you now build and run the test again, Jest will tell you that the template changed:
+
+```bash
+$ npm run build && npm test
+
+FAIL test/dead-letter-queue.test.js
+✕ dlq creates an alarm (58ms)
+
+● dlq creates an alarm
+
+expect(received).toMatchSnapshot()
+
+Snapshot name: `dlq creates an alarm 1`
+
+- Snapshot
++ Received
+
+@@ -19,11 +19,11 @@
+               },
+             ],
+             "EvaluationPeriods": 1,
+             "MetricName": "ApproximateNumberOfMessagesVisible",
+             "Namespace": "AWS/SQS",
+     -       "Period": 300,
+     +       "Period": 60,
+             "Statistic": "Maximum",
+             "Threshold": 1,
+           },
+           "Type": "AWS::CloudWatch::Alarm",
+         },
+
+ › 1 snapshot failed.
+Snapshot Summary
+ › 1 snapshot failed from 1 test suite. Inspect your code changes or run `npm test -- -u` to update them.
+```
+
+Jest is telling you that the change you just made changed the emitted Period attribute from 300 to 60. 
+You now have the choice of undoing our code change if this result was accidental, or committing to the new snapshot 
+if you intended to make this change. To commit to the new snapshot, run:
+
+```bash
+npm test -- -u
+```
+
+Jest will tell you that it updated the snapshot. You’ve now locked in the new alarm period:
+
+```bash
+PASS  test/dead-letter-queue.test.js
+ ✓ dlq creates an alarm (51ms)
+
+ › 1 snapshot updated.
+Snapshot Summary
+ › 1 snapshot updated
+```
+
+**Dealing with change**
+
+Let’s return to the `DeadLetterQueue` construct. Messages go to the dead letter queue when something is wrong with the 
+primary queue processor, and you are notified via an alarm. After you fix the problem with the queue processor, 
+you’ll usually want to redrive the messages from the dead letter queue, back to the primary queue, to have them processed as usual.
+
+Messages only exist in a queue for a limited time though. To give yourself the greatest chance of recovering the messages from 
+the dead letter queue, set the lifetime of messages in the dead letter queue (called the retention period) to the maximum time of 2 weeks. 
+You make the following changes to your `DeadLetterQueue` construct:
+
+```TypeScript
+export class DeadLetterQueue extends sqs.Queue {
+  constructor(parent: Construct, id: string) {
+    super(parent, id, {
+      // Maximum retention period
+      retentionPeriod: Duration.days(14)
+    });
+    // ...
+  }
+}
+```
+
+Now run the tests again:
+
+```bash
+$ npm run build && npm test
+FAIL test/dead-letter-queue.test.js
+✕ dlq creates an alarm (79ms)
+
+    ● dlq creates an alarm
+
+    expect(received).toMatchSnapshot()
+
+    Snapshot name: `dlq creates an alarm 1`
+
+    - Snapshot
+    + Received
+
+    @@ -1,8 +1,11 @@
+      Object {
+        "Resources": Object 
+          "DLQ581697C4": Object {
+    +       "Properties": Object {
+    +         "MessageRetentionPeriod": 1209600,
+    +       },
+            "Type": "AWS::SQS::Queue",
+         },
+         "DLQAlarm008FBE3A": Object {
+           "Properties": Object {
+             "AlarmDescription": "There are messages in the Dead Letter Queue",
+
+  › 1 snapshot failed.
+Snapshot Summary
+  › 1 snapshot failed from 1 test suite. Inspect your code changes or run `npm test -- -u` to update them.
+```
+
+The snapshot test broke again, because you added a retention period property. Even though the test was only intended to make sure 
+that the `DeadLetterQueue` construct created an alarm, it was inadvertently also testing that the queue was created with default options.
+
+**Writing fine-grained assertions on resources**
+
+Snapshot tests are convenient to write and have their place for detecting accidental change. We use them in the CDK for our 
+integration tests when validating larger bits of functionality all together. If a change causes an integration test’s template 
+to deviate from its snapshot, we use that as a trigger to tell us we need to do extra validation, for example actually deploying 
+the template through [AWS CloudFormation](https://aws.amazon.com/cloudformation/) and verifying our infrastructure still works.
+
+In the CDK’s extensive suite of unit tests, we don’t want to revisit all the tests any time we make a change. To avoid this, 
+we use the custom assertions in the `@aws-cdk/assert/jest` module to write fine-grained tests that verify only part of the construct’s 
+behavior at a time, i.e. only the part we’re interested in for that particular test. For example, the test called “dlq creates an alarm” 
+should assert that an alarm gets created with the appropriate metric, and it should not make any assertions on the properties 
+of the queue that gets created as part of that test.
+
+To write this test, you will have a look at the [AWS::CloudWatch::Alarm](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cw-alarm.html) 
+resource specification in CloudFormation, and see what properties and values you’re using the assertion library to guarantee. 
+In this case, you’re interested in the properties **Namespace**, **MetricName** and **Dimensions**. You can use the `expect(stack).toHaveResource(...)` 
+assertion to make sure those have the values you want. To get access to that assertion, you’ll first need to import `@aws-cdk/assert/jest`, 
+which extends the assertions that are available when you type `expect(…)`. Putting this all together, your test should look like this:
+
+```TypeScript
+import '@aws-cdk/assert/jest';
+
+// ...
+test('dlq creates an alarm', () => {
+  const stack = new Stack();
+
+  new dlq.DeadLetterQueue(stack, 'DLQ');
+
+  expect(stack).toHaveResource('AWS::CloudWatch::Alarm', {
+    MetricName: "ApproximateNumberOfMessagesVisible",
+    Namespace: "AWS/SQS",
+    Dimensions: [
+      {
+        Name: "QueueName",
+        Value: { "Fn::GetAtt": [ "DLQ581697C4", "QueueName" ] }
+      }
+    ],
+  });
+});
+```
+
+This test asserts that an **Alarm** is created on the `ApproximateNumberOfMessagesVisible` metric of the dead letter queue (by means of the `{ Fn::GetAtt }` intrinsic). 
+If you run Jest now, it will warn you about an existing snapshot that your test no longer uses, so get rid of it by running `npm test -- -u`.
+
+You can now add a second test for the retention period:
+
+```TypeScript
+test('dlq has maximum retention period', () => {
+  const stack = new Stack();
+
+  new dlq.DeadLetterQueue(stack, 'DLQ');
+
+  expect(stack).toHaveResource('AWS::SQS::Queue', {
+    MessageRetentionPeriod: 1209600
+  });
+});
+```
+
+Run the tests to make sure everything passes:
+
+```bash
+$ npm run build && npm test
+ 
+PASS  test/dead-letter-queue.test.js
+  ✓ dlq creates an alarm (48ms)
+  ✓ dlq has maximum retention period (15ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       2 passed, 2 total
+Bash
+It does!
+```
+
+**Validating construct configuration**
+
+Maybe you want to make the retention period configurable, while validating that the user-provided value falls into an acceptable range. 
+You’d create a `Props` interface for the construct and add a check on the allowed values that your construct will accept:
+
+```TypeScript
+export interface DeadLetterQueueProps {
+    /**
+     * The amount of days messages will live in the dead letter queue
+     *
+     * Cannot exceed 14 days.
+     *
+     * @default 14
+     */
+    retentionDays?: number;
+}
+
+export class DeadLetterQueue extends sqs.Queue {
+  public readonly messagesInQueueAlarm: cloudwatch.IAlarm;
+
+  constructor(scope: Construct, id: string, props: DeadLetterQueueProps = {}) {
+    if (props.retentionDays !== undefined && props.retentionDays > 14) {
+      throw new Error('retentionDays may not exceed 14 days');
+    }
+
+    super(scope, id, {
+        // Given retention period or maximum
+        retentionPeriod: Duration.days(props.retentionDays || 14)
+    });
+    // ...
+  }
+}
+```
+
+To test that your new feature actually does what you expect, you’ll write two tests:
+
+  * One that checks a configured value ends up in the template; and
+  * One which supplies an incorrect value to the construct and checks that you get the error you’re expecting.
+
+```TypeScript
+test('retention period can be configured', () => {
+  const stack = new Stack();
+
+  new dlq.DeadLetterQueue(stack, 'DLQ', {
+    retentionDays: 7
+  });
+
+  expect(stack).toHaveResource('AWS::SQS::Queue', {
+    MessageRetentionPeriod: 604800
+  });
+});
+
+test('configurable retention period cannot exceed 14 days', () => {
+  const stack = new Stack();
+
+  expect(() => {
+    new dlq.DeadLetterQueue(stack, 'DLQ', {
+      retentionDays: 15
+    });
+  }).toThrowError(/retentionDays may not exceed 14 days/);
+});
+```
+
+Run the tests to confirm:
+
+```bash
+$ npm run build && npm test
+
+PASS  test/dead-letter-queue.test.js
+  ✓ dlq creates an alarm (62ms)
+  ✓ dlq has maximum retention period (14ms)
+  ✓ retention period can be configured (18ms)
+  ✓ configurable retention period cannot exceed 14 days (1ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       4 passed, 4 total
+```
+
+You’ve confirmed that your feature works, and that you’re correctly validating the user’s input.
+
+As a bonus: you know from your previous tests still passing that you didn’t change any of the behavior 
+when the user does not specify any arguments, which is great news!
+
+**Conclusion**
+
+You’ve written a reusable construct, and covered its features with resource assertion and validation tests. 
+Regardless of whether you’re planning on writing tests on your own infrastructure application, on your own 
+reusable constructs, or whether you’re planning to [contribute to the CDK on GitHub](https://github.com/aws/aws-cdk/blob/master/CONTRIBUTING.md), 
+I hope this blog post has given you some mental tools for thinking about testing your infrastructure code.
+
+Finally, two values I’d like to instill in you when you are writing tests:
+
+  * **Treat test code like you would treat application code.** Test code is going to have an equally long lifetime 
+    in your code as regular code, and is equally subject to change. Don’t copy/paste setup lines or common assertions 
+	all over the place, take some extra time to factor out commonalities into helper functions. 
+	Your future self will thank you.
+
+  * Don’t assert too much in one test.** Preferably, a test should test one and only one behavior. If you accidentally 
+    break that behavior, you would prefer exactly one test to fail, and the test name will tell you exactly what you broke. 
+	There’s nothing worse than changing something trivial and having dozens of tests fail and need to be updated 
+	because they were accidentally asserting some behavior other than what the test was for. 
+	This does mean that—regardless of how convenient they are—you should be using snapshot tests sparingly, 
+	as all snapshot tests are going to fail if literally anything about the construct behavior changes, 
+	and you’re going to have to go back and scrutinize all failures to make sure nothing accidentally slipped by.
+
+Happy testing!
+
 ##### CDK: Demo
 
+The [AWS Cloud Development Kit](https://aws.amazon.com/cdk/) (CDK) allows us to **define our cloud infrastructure using code**. 
+Instead of clicking through the web UI, or AWS console as it is called, we use code. Code that can be checked into version control 
+for collaboration, annotated with documentation and certainly for testing.
+
+The following section focusses on the testing aspect.
+
+If we choose TypeScript we can initialise a CDK project with the following command after having installed `aws-cdk`.
+
+```bash
+cdk init app --language typescript
+```
+
+The project ends up with a generated empty stack. As the comment states we have not defined anything yet.
+
+> **`cdktests-stack.ts`**
+>
+
+```TypeScript
+import * as cdk from '@aws-cdk/core';
+
+export class CdktestsStack extends cdk.Stack {
+  constructor(scope: cdk.Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+
+    // The code that defines your stack goes here
+  }
+}
+```
+
+As an addition an initial test case has been generated in the test directory of our project. 
+It makes sure to test the fact **our stack is empty**. As defined above. Having the test directory and an initial test already 
+tells us the CDK code can be tested and the intention of the framework authors to have tests.
+
+> **`cdktests.test.ts`**
+>
+
+```TypeScript
+import { expect as expectCDK, matchTemplate, MatchStyle } from '@aws-cdk/assert';
+import * as cdk from '@aws-cdk/core';
+import * as Cdktests from '../lib/cdktests-stack';
+
+test('Empty Stack', () => {
+    const app = new cdk.App();
+    // WHEN
+    const stack = new Cdktests.CdktestsStack(app, 'MyTestStack');
+    // THEN
+    expectCDK(stack).to(matchTemplate({
+      "Resources": {}
+    }, MatchStyle.EXACT))
+});
+```
+
+We can run the tests via npm run test and get the following results:
+
+![npm_run_cdktests_test_ts](./assets/npm_run_cdktests_test_ts.png)
+
+How does this work? We have an assertion checking whether our template has resources. The template used for comparison 
+is our [Cloud Formation template](https://aws.amazon.com/cloudformation/). It is the output of `cdk synth`.
+
+Without changing the generated `CdkTestsStack`, which has no resources defined yet, it looks as follows:
+
+> **`cloudformation1.yaml`**
+>
+
+```yaml
+Resources:
+  CDKMetadata:
+    Type: AWS::CDK::Metadata
+    Properties:
+      Modules: aws-cdk=1.90.1,@aws-cdk/cloud-assembly-schema=1.90.1,@aws-cdk/cor
+e=1.90.1,@aws-cdk/cx-api=1.90.1,@aws-cdk/region-info=1.90.1,jsii-runtime=node.js
+/v15.0.1
+    Metadata:
+      aws:cdk:path: CdktestsStack/CDKMetadata/Default
+    Condition: CDKMetadataAvailable
+Conditions:
+  CDKMetadataAvailable:
+```
+
+`Resources` only have the `CDKMetadata` entry. This is about to change.
+
+**Building our stack**
+
+Let’s create a private [ECR repository](https://docs.aws.amazon.com/AmazonECR/latest/userguide/Repositories.html) for our docker image. 
+The image will later be used to run our application with [AWS Fargate](https://aws.amazon.com/fargate/). The image is uploaded to the ECR repository 
+and AWS Fargate will pick it up and run it.
+
+We run `npm i @aws-cdk/aws-ecr` to get the required dependencies and extend the stack.
+
+> **`cdktests-stack.ts`**
+>
+
+```TypeScript
+import * as cdk from '@aws-cdk/core';
+import * as ecr from '@aws-cdk/aws-ecr';
+
+export class CdktestsStack extends cdk.Stack {
+  constructor(scope: cdk.Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+
+    new ecr.Repository(this, 'test-repository', {
+      repositoryName: `test`
+    });
+  }
+}
+```
+
+Running `cdk synth` again provides the following output:
+
+> **`withrepository.yaml`**
+>
+
+```yaml
+Resources:
+  testrepository3CFC24EC:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: test
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Metadata:
+      aws:cdk:path: CdktestsStack/test-repository/Resource
+  CDKMetadata:
+    Type: AWS::CDK::Metadata
+```
+
+Now our repository is present in the resources. Our first resource! On to writing the test.
+
+> **`cdktests.test.ts`**
+>
+
+```TypeScript
+import { expect as expectCDK, haveResource } from '@aws-cdk/assert';
+import * as cdk from '@aws-cdk/core';
+import * as Cdktests from '../lib/cdktests-stack';
+
+test('ECR Resource is present', () => {
+    const app = new cdk.App();
+
+    const stack = new Cdktests.CdktestsStack(app, 'MyTestStack');
+
+    expectCDK(stack).to(haveResource("AWS::ECR::Repository",{
+        RepositoryName: 'test'
+    }));
+});
+```
+
+We assert our stack has the `AWS::ECR::Repository` resource with the `RepositoryName` property value `test`. The test passes.
+
+Time to set up our `ApplicationLoadBalancedFargateService`. The construct is part of the `@aws-cdk/aws-ecs-patterns`. We reference our 
+ECR repository in the `taskImageOptions`. Making sure the `latest` image is picked up by Fargate.
+
+> **`cdktests-stack.ts`**
+>
+
+```TypeScript
+import * as cdk from '@aws-cdk/core';
+import * as ecr from '@aws-cdk/aws-ecr';
+import * as ecs from '@aws-cdk/aws-ecs';
+import {ApplicationLoadBalancedFargateService} from "@aws-cdk/aws-ecs-patterns";
+
+export class CdktestsStack extends cdk.Stack {
+  constructor(scope: cdk.Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+
+    const repository = new ecr.Repository(this, 'test-repository', {
+      repositoryName: `test`
+    });
+
+    new ApplicationLoadBalancedFargateService(this, 'test-fargate', {
+      taskImageOptions: {
+        image: ecs.ContainerImage.fromEcrRepository(repository, 'latest')
+      }
+    })
+  }
+}
+```
+
+Aside from the `image` property did not provide other configuration. Thus the 
+default values are used. We could write tests to be sure which values are used.
+This both increases visibility of which values are used and makes sure we would learn about changes to the construct 
+even when updating `aws-ecs-patterns` to a newer version. It allows us to learn if, for example, the 
+`DesiredCount` default would ever change to two instances.
+
+The next test asserts some of the default values.
+
+We should only do this with properties that are important to us.
+
+> **`cdktests.test.ts`**
+>
+
+```TypeScript
+test('Fargate service is using the default values', () => {
+    const app = new cdk.App();
+
+    const stack = new Cdktests.CdktestsStack(app, 'MyTestStack');
+
+    expectCDK(stack).to(haveResource("AWS::ECS::Service",{
+        LaunchType: 'FARGATE',
+        DesiredCount: 1,
+        HealthCheckGracePeriodSeconds: 60
+    }));
+});
+```
+
+The test passes. Let’s try to test if the `ApplicationLoadBalancedFargateService` is using the latest image in our repository.
+
+Here we can use `haveResourceLike` instead of `haveResource`. Else we would need to specify the values for `Essential`, `LogConfiguration`, 
+`Name` and `PortMappings` too to allow for a proper comparison of `ContainerDefinitions`.
+
+> **`cdktests.test.ts`**
+>
+
+```TypeScript
+test('Fargate is using the latest image in ECR', () => {
+    const app = new cdk.App();
+
+    const stack = new Cdktests.CdktestsStack(app, 'MyTestStack');
+
+    expectCDK(stack).to(haveResourceLike("AWS::ECS::TaskDefinition",{
+        ContainerDefinitions: [{
+            Image: {
+                "Fn::Join": [
+                    "",
+                    [
+                        {
+                            "Fn::Select": [
+                                4,
+                                {
+                                    "Fn::Split": [
+                                        ":",
+                                        {
+                                            "Fn::GetAtt": [
+                                                "testrepository3CFC24EC",
+                                                "Arn"
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        ".dkr.ecr.",
+                        {
+                            "Fn::Select": [
+                                3,
+                                {
+                                    "Fn::Split": [
+                                        ":",
+                                        {
+                                            "Fn::GetAtt": [
+                                                "testrepository3CFC24EC",
+                                                "Arn"
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        ".",
+                        {
+                            "Ref": "AWS::URLSuffix"
+                        },
+                        "/",
+                        {
+                            "Ref": "testrepository3CFC24EC"
+                        },
+                        ":latest"
+                    ]
+                ]
+            }
+        }]
+    }));
+}
+```
+
+Using the CloudFormation JSON syntax makes the test pretty much unreadable. It has to be copied from the `cdk synth` output 
+and pasted into the test code. It also gives us a glimpse of what writing CloudFormation templates would look like. 
+In the future this cold be moved into a helper function.
+
+**Test driving changes**
+
+Say we are building a [Spring Boot](https://spring.io/projects/spring-boot) application. Thus the url to conduct the health check 
+of our services via load balancer is `/actuator/health`. We need a way to configure it. It is a possible property in our 
+`AWS::ElasticLoadBalancingV2::TargetGroup` resource.
+
+> **`afterecs.yaml`**
+>
+
+```yaml
+testfargateLBPublicListenerECSGroup81318DEB:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      VpcId:
+        Ref: EcsDefaultClusterMnL3mNNYNVpc7788A521
+    Metadata:
+      aws:cdk:path: CdktestsStack/test-fargate/LB/PublicListener/ECSGroup/Resource
+```
+
+We write the following test
+
+> **`cdktests.test.ts`**
+>
+
+```TypeScript
+test('ELB health check path is using Spring Boot endpoint', () => {
+    const app = new cdk.App();
+
+    const stack = new Cdktests.CdktestsStack(app, 'MyTestStack');
+
+    expectCDK(stack).to(haveResource("AWS::ElasticLoadBalancingV2::TargetGroup",{
+        HealthCheckPath: '/actuator/health'
+    }));
+});
+```
+
+The new test fails. We can fix it by extending our stack and configuring the health check.
+
+> **`cdktests-stack.ts`**
+>
+
+```TypeScript
+const albfs = new ApplicationLoadBalancedFargateService(this, 'test-fargate', {
+  taskImageOptions: {
+    image: ecs.ContainerImage.fromEcrRepository(repository, 'latest')
+  }
+})
+
+albfs.targetGroup.configureHealthCheck({
+  path: '/actuator/health',
+});
+```
+
+As a result `cdk synth` provides the new Cloud Formation template
+
+> **`afterhealth.yaml`**
+>
+
+```yaml
+  testfargateLBPublicListenerECSGroup81318DEB:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckPath: /actuator/health
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      VpcId:
+        Ref: EcsDefaultClusterMnL3mNNYNVpc7788A521
+    Metadata:
+      aws:cdk:path: CdktestsStack/test-fargate/LB/PublicListener/ECSGroup/Resource
+```
+
+And all of our four tests pass
+
+![npm_run_cdktests_test_ts_four_tests](./assets/npm_run_cdktests_test_ts_four_tests.png)
+
+Sure, the health check will only work if we provide the default Spring Boot port of 8080 
+to the `containerPort` of `taskImageOptions`. But that is for another time.
+
+**Why would we want to test the CDK code?**
+
+There are plenty of projects around that don’t test their CDK code. They might be fully productive without it. 
+The [maintainers of the CDK project](https://github.com/aws/aws-cdk) have tested the constructs to make sure they work. 
+Thus we won’t have to. Still, there are some benefits to having them under test.
+
+The tests can act as a **sanity check**. Are the constructs doing what I’m expecting them to do? 
+As an **early warning** system if someone inadvertently removes something important. What if someone removes some critical configuration 
+deemed unnecessary from their perspective? They can be used as **documentation and specification** for future developers or our own future selves. 
+And of course as part of the **test driven development workflow**. We might not get as much design feedback on the constructs used from libraries 
+but it will help to structure the way in which we work. Step by step.
+
 ##### CDK: Unit Tests
+
+In this example we create a new lambda function that executes every day at 6pm UTC, as dictated by a cron scheduled event.
+
+###### Testing using TypeScript
+
+####### Build
+
+####### Test
+
+####### Deploy
+
+####### Synthesize Cloudformation Template
+
+###### Testing using Python
+
+####### Build
+
+####### Test
+
+####### Deploy
+
+####### Synthesize Cloudformation Template
+
+###### Testing using Java
+
+
+####### Build
+
+####### Test
+
+####### Deploy
+
+####### Synthesize Cloudformation Template
+
+###### Testing using Go
+
+####### Build
+
+####### Test
+
+####### Deploy
+
+####### Synthesize Cloudformation Template
 
 **[⬆ back to top](#table-of-contents)**
