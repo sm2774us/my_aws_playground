@@ -351,6 +351,8 @@ Given the current community momentum around CDK and growing investment from AWS,
 
 #### Terraform vs CloudFormation vs AWS CDK
 
+| <!-- -->                                                                                    | <!-- -->                                                |
+|---------------------------------------------------------------------------------------------|---------------------------------------------------------|
 | Am I working on a simple, mostly serverless solution with minimal dependency or dependents? | CloudFormation (particularly AWS SAM) is likely enough. |
 | Do I have a top-down distribution of best practices and orchestration?	                  | CDK or Terraform                                        |
 | Do I want to stay entirely within the AWS ecosystem?	                                      | CloudFormation or CDK                                   |
@@ -366,6 +368,8 @@ The only truly wrong answer is the one that prevents you from building anything 
 The IaC space is growing, everyone has their own opinion and how things should work.
 I’d argue competition is healthy and in some cases has forced the providers themselves to step their game up.
 
+| <!-- -->             | <!-- -->                                                                                                                                                                                                                                                                                                                         |
+|----------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | AWS Amplify CLI	   | A CLI toolchain for simplifying serverless web and mobile development. If you are primarily a frontend developer, or just want to get going as fast as possible, look no further. The Amplify CLI and framework manages all the complexity behind the scenes to help you build and deploy real-time web and mobile applications. |
 | Pulumi	           | If the Terraform and CDK teams got together and reimagined things, I get the sense it would look a bit like Pulumi.                                                                                                                                                                                                              |
 | Troposphere	       | The troposphere library allows for easier creation of the AWS CloudFormation JSON by writing Python code to describe the AWS resources. Troposphere also includes some basic support for OpenStack resources via Heat.                                                                                                           |
