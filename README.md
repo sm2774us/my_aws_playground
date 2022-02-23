@@ -701,13 +701,476 @@ This launches a website containing the TaskCat dashboard. You can click on **Vie
 
 ##### CloudFormation: Demo
 
+**Introduction**
+
+When writing AWS CloudFormation in YAML or JSON, it is difficult to visually review the contents of the template, such as grammar and parameter types. 
+Therefore, there are various tools to make it easier to test CloudFormation. 
+In this section, we will introduce these tools and aim to define the introduction of the introduced tools in Dockerfile and reuse them.
+
+**Tool introduction**
+
+Tools range from those that come with the AWS CLI to those that are open source. I will introduce them one by one.
+
+① aws cloudformation validate-template
+
+  * You can use the aws cloudformation validate-template command to check if the specified template is valid JSON or YAML.
+  * However, this command does not check the validity of the value, it only checks whether it is written in the correct grammar.
+
+![validate-template](./assets/validate-template.png)
+
+https://awscli.amazonaws.com/v2/documentation/api/latest/reference/cloudformation/validate-template.html
+
+**Execution example**
+
+```bash
+bash-4.2# aws cloudformation validate-template --template-body file://./vpcsample-template.yaml 
+
+An error occurred (ValidationError) when calling the ValidateTemplate operation: Template format error: YAML not well-formed. (line 26, column 17)
+```
+
+② cfn-lint
+
+  * The official name is "AWS CloudFormation Linter"
+  * Validate CloudFormation YAML and JSON templates according to resource specifications and additional check items.
+  * Includes valid values ​​for properties, as well as checking best practices.
+
+![AWS-CloudFormation-linter](./assets/AWS-CloudFormation-linter.png)
+
+https://github.com/aws-cloudformation/cfn-python-lint
+
+**Execution example**
+
+```bash
+bash-4.2# cfn-lint vpcsample-template.yaml
+W3010 Don't hardcode ap-northeast-1a for AvailabilityZones
+vpcsample-template.yaml:18:13
+```
+
+③ taskcat
+
+  * Create a stack in parallel in multiple AWS Regions to test for deployment.
+  * You can detect problems that cannot be detected by testing a single template or stack.
+  * For example, you can find out if there are any services that are not supported in a particular region.
+  * You can generate success/failure reports for each region.
+  * Effective for checking when using CloudFormation Stack Sets.
+
+![taskcat](./assets/taskcat.png)
+
+https://github.com/aws-quickstart/taskcat
+
+**.taskcat.yml sample**
+
+```yaml
+project:
+   name: taskcat-example
+   regions:
+      - ap-northeast-1
+      - us-east-1
+   tests:
+      vpcsample:
+         template: ./vpcsample-template.yaml
+```
+
+**Execution example**
+
+```bash
+bash-4.2# taskcat test run 
+
+version 0.9.20
+[INFO   ] : Linting passed for file: /workspaces/awsdev/work/vpcsample-template.yaml
+[S3: -> ] s3://tcat-taskcat-example-XXXXXXXXXXXXXX/taskcat-example/vpcsample-template.yaml
+[INFO   ] : ┏ stack Ⓜ tCaT-taskcat-example-vpcsample-2a58141fb6114aed895774ebfcac9ed2                                        
+[INFO   ] : ┣ region: ap-northeast-1                                                                                         
+[INFO   ] : ┗ status: CREATE_COMPLETE                                                                                        
+[INFO   ] : ┏ stack Ⓜ tCaT-taskcat-example-vpcsample-2a58141fb6114aed895774ebfcac9ed2                                        
+[INFO   ] : ┣ region: us-east-1                                                                                              
+[INFO   ] : ┗ status: CREATE_COMPLETE                                                                                        
+[INFO   ] : Reporting on arn:aws:cloudformation:ap-northeast-1:XXXXXXXXXXXX:stack/tCaT-taskcat-example-vpcsample-2a58141fb6114aed895774ebfcac9ed2/7e9705c0-2747-11eb-861d-0aff14bc0982
+[INFO   ] : Reporting on arn:aws:cloudformation:us-east-1:XXXXXXXXXXXX:stack/tCaT-taskcat-example-vpcsample-2a58141fb6114aed895774ebfcac9ed2/7fc94430-2747-11eb-bfb5-1246411399d1
+[INFO   ] : Deleting stack: arn:aws:cloudformation:ap-northeast-1:XXXXXXXXXXXX:stack/tCaT-taskcat-example-vpcsample-2a58141fb6114aed895774ebfcac9ed2/7e9705c0-2747-11eb-861d-0aff14bc0982
+[INFO   ] : Deleting stack: arn:aws:cloudformation:us-east-1:XXXXXXXXXXXX:stack/tCaT-taskcat-example-vpcsample-2a58141fb6114aed895774ebfcac9ed2/7fc94430-2747-11eb-bfb5-1246411399d1
+[INFO   ] : ┏ stack Ⓜ tCaT-taskcat-example-vpcsample-2a58141fb6114aed895774ebfcac9ed2                                        
+[INFO   ] : ┣ region: ap-northeast-1                                                                                         
+[INFO   ] : ┗ status: DELETE_COMPLETE                                                                                        
+[INFO   ] : ┏ stack Ⓜ tCaT-taskcat-example-vpcsample-2a58141fb6114aed895774ebfcac9ed2                                        
+[INFO   ] : ┣ region: us-east-1                                                                                              
+[INFO   ] : ┗ status: DELETE_COMPLETE
+```
+
+**Report sample (text)**
+
+```bash
+bash-4.2# cat tCaT-taskcat-example-vpcsample-2a58141fb6114aed895774ebfcac9ed2-ap-northeast-1-cfnlogs.txt
+-----------------------------------------------------------------------------
+Region: ap-northeast-1
+StackName: tCaT-taskcat-example-vpcsample-2a58141fb6114aed895774ebfcac9ed2
+*****************************************************************************
+ResourceStatusReason:  
+Stack launch was successful
+*****************************************************************************
+*****************************************************************************
+Events:  
+TimeStamp                         ResourceStatus      ResourceType                LogicalResourceId                                                ResourceStatusReason
+--------------------------------  ------------------  --------------------------  ---------------------------------------------------------------  ---------------------------
+2020-11-15 13:36:54.256000+00:00  CREATE_COMPLETE     AWS::CloudFormation::Stack  tCaT-taskcat-example-vpcsample-2a58141fb6114aed895774ebfcac9ed2
+2020-11-15 13:36:52.656000+00:00  CREATE_COMPLETE     AWS::EC2::Subnet            TestSubnet01
+2020-11-15 13:36:40.587000+00:00  CREATE_COMPLETE     AWS::EC2::Subnet            TestSubnet03
+2020-11-15 13:36:40.280000+00:00  CREATE_COMPLETE     AWS::EC2::Subnet            TestSubnet02
+2020-11-15 13:36:36.368000+00:00  CREATE_IN_PROGRESS  AWS::EC2::Subnet            TestSubnet01                                                     Resource creation Initiated
+2020-11-15 13:36:35.712000+00:00  CREATE_IN_PROGRESS  AWS::EC2::Subnet            TestSubnet01
+2020-11-15 13:36:24.163000+00:00  CREATE_IN_PROGRESS  AWS::EC2::Subnet            TestSubnet03                                                     Resource creation Initiated
+2020-11-15 13:36:24.147000+00:00  CREATE_IN_PROGRESS  AWS::EC2::Subnet            TestSubnet02                                                     Resource creation Initiated
+2020-11-15 13:36:23.594000+00:00  CREATE_IN_PROGRESS  AWS::EC2::Subnet            TestSubnet03
+2020-11-15 13:36:23.442000+00:00  CREATE_IN_PROGRESS  AWS::EC2::Subnet            TestSubnet02
+2020-11-15 13:36:21.092000+00:00  CREATE_COMPLETE     AWS::EC2::VPC               TestVPC
+2020-11-15 13:36:04.224000+00:00  CREATE_IN_PROGRESS  AWS::EC2::VPC               TestVPC                                                          Resource creation Initiated
+2020-11-15 13:36:03.612000+00:00  CREATE_IN_PROGRESS  AWS::EC2::VPC               TestVPC
+2020-11-15 13:35:59.310000+00:00  CREATE_IN_PROGRESS  AWS::CloudFormation::Stack  tCaT-taskcat-example-vpcsample-2a58141fb6114aed895774ebfcac9ed2  User Initiated
+*****************************************************************************
+-----------------------------------------------------------------------------
+Tested on: Sunday, 15. November 2020 01:37PM
+```
+
+**Report sample (HTML)**
+
+![taskcat-report-html](./assets/taskcat-report-html.png)
+
+④ cfn_nag
+
+  * A tool for inspecting and displaying the following unsafe settings.
+  * IAM rules (wildcards) that are too broad
+  * Security group rules (wildcards) that are too wide tolerated
+  * Unenabled access log
+  * Unenabled encryption
+  * Password strength
+
+![cfn-nag](./assets/cfn-nag.png)
+
+https://github.com/stelligent/cfn_nag
+
+**Execution example**
+
+```bash
+bash-4.2# cfn_nag_scan --input-path vpcsample-template.yaml 
+------------------------------------------------------------
+vpcsample-template.yaml
+------------------------------------------------------------------------------------------------------------------------
+| WARN W60
+|
+| Resources: ["TestVPC"]
+| Line Numbers: [5]
+|
+| VPC should have a flow log attached
+
+Failures count: 0
+Warnings count: 1
+```
+
+⑤ CloudFormation Guard
+
+  * Checks if the template is described within the predetermined rules.
+  * Write the rules in advance in the .ruleset file.
+  * The cfn-guard command checks if YAML is written according to that rule.
+  * It is good to use it to check the conformity with the project-specific or non-deviable conditions, such as making rules for the constraints set for each project or writing the design value agreed with the customer and using it for the final check. That's right.
+
+![AWS-CloudFormation-guard](./assets/AWS-CloudFormation-guard.png)
+
+https://github.com/aws-cloudformation/cloudformation-guard
+
+**Execution example**
+
+```bash
+bash-4.2# cfn-guard check -t Examples/ebs_volume_template.json -r Examples/ebs_volume_template.ruleset
+
+[NewVolume2] failed because [Encrypted] is [false] and the permitted value is [true]
+[NewVolume] failed because [Encrypted] is [false] and the permitted value is [true]
+[NewVolume] failed because [Size] is [500] and the permitted value is [<= 100]
+Number of failures: 3
+```
+
+**Pack test tools into Dockerfile**
+
+It can also be run with VSCode Remote Containers.
+
+Also, since privilege is required to execute taskcat, let's move it by referring to the link below. This article is titled VSCode Remote Containers, but if you don't use VSCode Remote Containers, you can follow the steps up to the point of attachment. How to develop in a container with --privileged and/sbin/init passed in VSCode Remote Containers
+
+```bash
+# AWS CLI v2 (Official)
+FROM amazon/aws-cli:latest
+
+# To install Visual Studio Code Server
+# and modules
+RUN yum -y update && \
+    yum -y install tar gzip git
+
+# To install pip
+RUN curl -kL https://bootstrap.pypa.io/get-pip.py | python
+
+# To install cfn-lint
+RUN pip install cfn-lint
+
+# To install taskcat
+RUN yum -y install python3 && \
+    pip3 install taskcat
+
+# To install docker (for taskcat)
+RUN amazon-linux-extras install -y docker
+
+# To install cfn-nag & CloudFormation Guard
+RUN yum -y install bzip2 gcc make openssl-devel && \
+    git clone https://github.com/sstephenson/rbenv.git ~/.rbenv && \
+    echo 'export PATH="$HOME/.rbenv/bin:$PATH"' >> ~/.bash_profile && \
+    echo 'eval "$(rbenv init -)"' >> ~/.bash_profile && \
+    source ~/.bash_profile && \
+    git clone git://github.com/sstephenson/ruby-build.git ~/.rbenv/plugins/ruby-build && \
+    ~/.rbenv/plugins/ruby-build/install.sh && \
+    rbenv install 2.7.2 && \
+    rbenv global 2.7.2 && \
+    gem install cfn-nag && \
+    yum -y install wget && \
+    wget https://github.com/aws-cloudformation/cloudformation-guard/releases/download/1.0.0/cfn-guard-linux-1.0.0.tar.gz && \
+    tar -xvf cfn-guard-linux-1.0.0.tar.gz -C ~/
+
+# To clean up
+RUN yum clean all
+```
+
+**Points that made a decision when creating a Dockerfile**
+
+I think the point is which container image to put in `FROM`, but this time I chose `amazon/aws-cli: latest`. 
+This image is the official AWS CLI v2 Docker image. Reference: [Using Official AWS CLI Version 2 Docker Image](https://docs.aws.amazon.com/ja_jp/cli/latest/userguide/install-cliv2-docker.html).
+
+I chose this image because I thought it would be better to use the official image to get support related to the AWS CLI.
+
+However, instead, installing and running cfn-nag requires a rather tedious procedure to install Ruby. 
+That said, if you use the image of ruby, installing the AWS CLI will be a little troublesome this time, 
+so even if you consider the advantages and disadvantages, it was difficult to make a decision.
+
+**Summary and for the future**
+
+  * By automating mechanical inspections as much as possible, it is possible to perform tests that do not depend on human judgment and are not overlooked.
+  * By combining multiple tools, you can test from different perspectives.
+  * However, when it comes to checking the consistency between requirements and templates, there are still some difficulties.
+  * When developing a waterfall model that SIer often does, it is checked whether the requirements of the previous process (basic design) and the contents of the template of the current process are consistent, but from this point of view, it is still difficult to inspect. , It can be said that it is a point that I would like to pursue in the future, including how much the recently released CloudFormation Guard can be used.
+
+**References**
+  * [YouTube: I'm in DevOps - Deep Dive: Infrastructure as Code on AWS (Level 300)](https://www.youtube.com/watch?v=YHdZYw3hXwE)
+  * [Use Official AWS CLI Version 2 Docker Image](https://docs.aws.amazon.com/ja_jp/cli/latest/userguide/install-cliv2-docker.html)
+
 ##### CloudFormation: Unit Tests
 
+  * **AWS CloudFormation - Simple S3 Bucket Example**
+    * [AWS CloudFormation - Simple S3 Bucket Example - Blog Post](https://sep.com/blog/automated-testing-for-cloudformation-templates/)
+    * [AWS CloudFormation - Simple S3 Bucket Example - Source Code](./IaC/cloudformation/single_s3_bucket_simple_example/README.md)
+  * **AWS CloudFormation - Mongodb on VPC Example**
+    * [AWS CloudFormation - Mongodb on VPC Example - Source Code](./IaC/cloudformation/mongodb_on_vpc_example/README.md)
+  
 #### Terraform: Unit Testing
+
+**Writing simple unit test case for AWS infrastructure**
+
+The more you write code regardless of application or infrastructure, the more you desire to bring the best outcome of your writing when they are running 
+as a realtime entity. And no way to deny that testing helps us to gain our confidence before going for production. So, why leave your infrastructure 
+code without testing? In this blog post, I am going to introduce writing unit tests for your infrastructure in AWS.
+
+Infrastructure as a Code (IAAC) is a blessing to us all, which allows us to code our infrastructure configuration under version control. 
+To reuse a particular piece of code over and over, you have to declare modules just as the same you declare objects in OOP. But what if the 
+base configuration template is not battle-tested or gets prone to configuration drift? Well, in this case, you better implement unit test cases 
+to cross-check your configuration against acceptance criteria.
+
+**Required Tools**
+
+  * **terraform:** Terraform is a widely used tool for writing infrastructure code and spinning cloud resources. you can also use existing code configuration by writing modules.
+  * **kitchen-terraform:** It is a terraform which is used to test terraform infrastructure configuration
+  * **rspec:** Rspec is testing tool for ruby language which is domain specific in nature, easy to write and used to test ruby code
+  * **awsspec:** It is rspec test suite for testing AWS infrastructure resources
+  * **ruby:** I guess no need to introduce this to you ;) if you can’t remember then google :D
+  * **bundler:** Manages ruby application dependencies and ruby gems
+  * **git:** Do I also need to introduce git, seriously?
+  * **make:** Linux build tool to execute task in easy way
+
+**Discussion**
+
+  * At first make sure that you have git, ruby, bundler and terraform installed in your system.
+
+  * In the next step, clone this [git](https://github.com/shudarshon/terraform-aws-unit-test) repository. 
+    This repository holds tiny Configurations for testing terraform code against AWS. The project structure looks like 
+	following
+
+![git-dir-layout](./assets/git-dir-layout.png)
+
+  * From the project structure we see that we got a `main.tf.env` file which is actually a terraform configuration file for a single ec2 instance. 
+    You need to rename that file to `main.tf` and use real values in configuration parameter to make the project work. 
+	But the configuration looks like terraform variable file. You might be thinking why mixing up variables and configurations?
+
+```
+module "ec2" {
+  source         = "modules/ec2"
+  aws_region     = "xxx"
+  instance_type  = "xxx"
+  instance_name  = "xxx"
+  ami_id         = "xxx"
+  subnet_id      = "xxx"
+  security_group = "xxx"
+  ssh_user_name  = "xxx"
+  ssh_key_name   = "secret"
+  ssh_key_path   = "/home/user/keyfiles/secret.pem"
+  instance_count = 1
+  dev_host_label = "dev"
+}
+```
+
+  Do you remember earlier I told about reusing of code like OOP?
+  Terraform provides exactly same features through modules. You create a module and later use them for similar type of resources multiple 
+  time with their own values. Here terraform module `ec2` is declared under `modules` directory.
+
+  * Let’s look kitchen test configuration file `kitchen.yml`
+
+```yaml
+---
+driver:
+  name: "terraform"
+  root_module_directory: "."
+
+provisioner:
+  name: "terraform"
+
+platforms:
+  - name: "aws"
+
+verifier:
+  name: "awspec"
+
+suites:
+  - name: "default"
+    verifier:
+      name: "awspec"
+      patterns:
+      - "test/unit/ec2/default_test.rb"
+```
+
+  We need to write the above configuration file because we have installed terraform kitchen testing pluging for testing our infrastructure 
+  code against cloud platforms. Configuration file parameter seems to easy to understand. I have put a dot “.” as a value of parameter 
+  `root_module_directory`. This parameter requires the path of terraform `modules` directory path. In Linux, dot “.” means present directory. 
+  Since both kitchen configuration file and terraform module root folder is in same directory hence I have used dot “.” as a value. 
+  Also, `awsspec` is used verify test cases written at `test/unit/ec2/default_test.rb`.
+
+  * Now let’s see how the project Gemfile is containing the ruby Gems required for the Project
+
+```
+# frozen_string_literal: true
+
+ruby '2.6.0'
+
+source 'https://rubygems.org/' do
+  gem 'aws-sdk'
+  gem 'awspec'
+  gem 'kitchen-terraform'
+  gem 'kitchen-verifier-awspec'
+  gem 'rhcl'
+end
+gem "test-kitchen"
+```
+
+  * Now we will discuss on project unit test is written at `test/unit/ec2/default_test.rb`. At first we require the base dependencies 
+    that we need to run the test cases. Next, we declare three variables `config_main`, `ec2_name` & `sg_id`. Later two variables hold exact 
+	values of `instance_name` and `security_group` parameter of `main.tf`. After spinning up infrastructure we will compare the instance name 
+	of EC2 and security group id of the EC2 against these two variables.
+
+```ruby
+# frozen_string_literal: true
+
+require 'awspec'
+require 'aws-sdk'
+require 'rhcl'
+
+# Parse and load our terraform manifest into config_main
+config_main = Rhcl.parse(File.open('main.tf'))
+ec2_name = config_main['module']['ec2']['instance_name']
+sg_id = config_main['module']['ec2']['security_group']
+```
+
+  But reading values of `main.tf` is not enough. After spinning up resources we need more parameters to check such as EC2 state, 
+  matching security group id etc. And, how do we do that? The answer is simple. We need to grab those values from terraform state file 
+  and store them in variable as first part. Then compare those values through our test cases. If you are missing the terraform state file point, 
+  then let me clear you that terraform creates a state file after it has finished spinning up a infrastructure for tracking changes. 
+  In the below snippet, we load the state file contents into a variable and pater parse specific values into specific folders for 
+  comparing EC2 properties.
+
+```ruby
+# Load the terraform state file and convert it into a Ruby hash
+state_file = './terraform.tfstate.d/kitchen-terraform-default-aws/terraform.tfstate'
+tf_state = JSON.parse(File.open(state_file).read)
+subnet_id = tf_state['modules'][1]['resources']['aws_instance.DevInstanceAWS']['primary']['attributes']['subnet_id']
+root_volume_id = tf_state['modules'][1]['resources']['aws_instance.DevInstanceAWS']['primary']['attributes']['root_block_device.0.volume_id']
+```
+
+  Finally, now it is time to write the test cases. In the following snippet you will observe that test cases written in gherkin syntax are 
+  extremely readable and comparing the newly spinned up EC2 properties against the variables that we declared earlier. 
+  Basically, using this test cases we are getting sure that our desired EC2 instance is existing, running, belongs to 
+  subnet X, has root EBS volume and has security group Y.
+
+```ruby
+# Test the EC2 resource
+describe ec2(ec2_name.to_s) do
+  it { should exist }
+end
+
+describe ec2(ec2_name.to_s) do
+  it { should be_running }
+end
+
+describe ec2(ec2_name.to_s) do
+  it { should belong_to_subnet(subnet_id.to_s) }
+end
+
+describe ec2(ec2_name.to_s) do
+  it { should have_ebs(root_volume_id.to_s) }
+end
+
+describe ec2(ec2_name.to_s) do
+  it { should have_security_group(sg_id.to_s) }
+end
+```
+
+**How to run**
+
+  * Copy main.tf.env to main.tf file. then use terraform variable values according to module configuration,
+```bash
+cp main.tf.env main.tf
+```
+
+  * Install testing dependencies gems by running,
+```bash
+bundle install --path vendor/bundle
+```
+
+  * Next, kitchen converge the test scenario which spins up the resources in aws,
+```bash
+bundle exec kitchen converge
+```
+
+  * Then verify infrastructure components by running,
+```
+bundle exec kitchen verify
+```
+
+  * Once testing is done destroy the resources,
+```bash
+bundle exec kitchen destroy
+```
 
 ##### Terraform: Demo
 
+  * **Writing simple unit test case for AWS infrastructure**
+    * [Writing simple unit test case for AWS infrastructure - Blog Post](http://shudarshon.com/2019-08-09/AWS-Unit-Test.html)
+    * [Writing simple unit test case for AWS infrastructure - Source Code](./IaC/terraform/kitchen-terraform-awsspec/README.md)
+
 ##### Terraform: Unit Tests
+
+  * **Writing simple unit test case for AWS infrastructure**
+    * [Writing simple unit test case for AWS infrastructure - Blog Post](http://shudarshon.com/2019-08-09/AWS-Unit-Test.html)
+    * [Test Terraform with Kitchen and AWSpec - Blog Post](https://www.darkraiden.com/blog/test-terraform-with-kitchen-and-awspec/)
 
 #### CDK
 
