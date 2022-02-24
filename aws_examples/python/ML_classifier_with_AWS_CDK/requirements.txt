@@ -1,0 +1,9 @@
+pyyaml
+sklearn
+boto3
+fastapi
+uvicorn
+python-multipart
+aiofiles
+jinja2
+pytest
